@@ -1,2 +1,2 @@
 # daily-biller-api
-A web application api
+A web application API
