@@ -4,6 +4,7 @@ var bodyParser = require('body-parser');
 var bcrypt = require('bcryptjs');
 app.use(bodyParser.json()); // support json encoded bodies
 app.use(bodyParser.urlencoded({ extended: true })); // support encoded bodies
+var mongo = require("mongodb");
 var MongoClient = require('mongodb').MongoClient;//accessing mongoclient property
 var url = 'mongodb://localhost:27017';
 var db; var clo;
@@ -16,6 +17,55 @@ MongoClient.connect(url, function (err, client) {
         clo = client.close.bind(client);
         console.log('Connected to MongoDB');
         db.collection('newuser').createIndex({ email: 1 }, { unique: true });
+
+    }
+});
+
+app.post('/addNewSubscription', function (req, res) {
+    var unitArray = ["kg", "litre", "bunch", "piece", "tin"];
+    var name = req.body.name;
+    var pricePerUnit = req.body.pricePerUnit;
+    var quantity = req.body.quantity;
+    var unit = req.body.unit;
+    var user_id = req.body.userid;
+    if (unitArray.includes(unit)) {
+        var newSubscriptionData = {
+            name: name,
+            pricePerUnit: pricePerUnit,
+            quantity: quantity,
+            unit: unit,
+            userid: user_id
+        };
+        try {
+            db.collection('newuser').findOne({ "_id": mongo.ObjectID(user_id) }, function (err, result) {//when this error will come
+                if (err) throw new Error(err);
+                if (!result) {
+                    res.send("error occured");
+                }
+                if (result) {
+                    db.collection('newSubscription').findOne({ "userid": user_id, "name": name }, function (err, result) {
+                        if (err) throw new Error(err);
+                        if (result) {
+                            res.send("product name already exists");
+                        }
+                        else {
+                            db.collection('newSubscription').insert(newSubscriptionData, function (err, result) {
+                                if (err) throw new Error(err);
+                                else res.send("inserted successfully");
+                            });
+                        }
+                    })
+                }
+
+            });
+        }
+        catch (err) {
+            if (err) throw new Error("something went wrong");
+        }
+    }
+    else {
+        throw new Error("please select a valid quantity");
+
     }
 });
 app.post('/userregistration', function (req, res) {
@@ -59,7 +109,6 @@ var callback = function (resp, pwd, err, result) {
         resp.send("password is incorrect");
     }
 }
-
 app.post('/login', function (req, res) {
     var username = req.body.username;
     var pwd = req.body.password;
@@ -67,7 +116,6 @@ app.post('/login', function (req, res) {
     var doc = db.collection('newuser').findOne({ firstname: username },
         example);
 });
-
 app.get('/', (req, res) => res.send("Hello world"));
 app.get('/home', (req, res) => res.json({ message: "hurray, you did it" }));
 app.get('/login', function (req, res) {
