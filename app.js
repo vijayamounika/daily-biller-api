@@ -8,6 +8,9 @@ var mongo = require("mongodb");
 var MongoClient = require('mongodb').MongoClient;//accessing mongoclient property
 var url = 'mongodb://localhost:27017';
 var db; var clo;
+var jwt = require('jsonwebtoken');
+var path = require('path');
+var config = require(path.resolve(__dirname, "./config.js"));
 //connect method to connect to the server
 MongoClient.connect(url, function (err, client) {
     if (err)
@@ -85,12 +88,25 @@ app.post('/userregistration', function (req, res) {
         if (err) {
             res.send(err);
         }
-        else {
-            res.send("inserted successfully");
+        var token = jwt.sign({ id: result.insertedIds[0].toString() }, config.secret, { expiresIn: 86400 });
+        res.status(200).send({ auth: true, token: token });
 
-        }
+
+
     });
 });
+app.get('/me', function (req, res) {
+    var token = req.headers['x-access-token'];
+    if (!token) return res.status(401).send({ auth: false, message: 'No token provided.' });
+    jwt.verify(token, config.secret, function (err, decoded) {
+        if (err) return res.status(500).send({ auth: false, message: 'Failed to authenticate token' });
+        db.collection('newuser').findOne({ "_id": mongo.ObjectID(decoded.id) }, { "password": false }, function (err, result) {
+            if (err) return res.status(500).send("There was a problem finding the user");
+            if (!result) return res.status(404).send("No user found");
+            res.status(200).send(result);
+        })
+    })
+})
 var callback = function (resp, pwd, err, result) {
     if (err) throw new (err);
     var compareResult = bcrypt.compareSync(pwd, result.password);
