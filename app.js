@@ -24,14 +24,28 @@ MongoClient.connect(url, function (err, client) {
 
     }
 });
-
-app.post('/addNewSubscription', function (req, res) {
+app.use('/auth/user', function (req, res, next) {
+    var token = req.headers['x-access-token'];
+    if (!token) return res.status(401).send({ auth: false, message: 'No token provided.' });
+    jwt.verify(token, config.secret, function (err, decoded) {
+        if (err) return res.status(500).send({ auth: false, message: 'Failed to authenticate token' });
+        db.collection('newuser').findOne({ "_id": mongo.ObjectID(decoded.id) }, { "password": false }, function (err, result) {
+            if (err) return res.status(500).send("There was a problem finding the user");
+            if (!result) return res.status(404).send("No user found");
+            //res.status(200).send(result);
+            req.user = result//
+            next();
+        })
+    })
+})
+app.post('/auth/user/addNewSubscription', function (req, res, next) {
     var unitArray = ["kg", "litre", "bunch", "piece", "tin"];
     var name = req.body.name;
     var pricePerUnit = req.body.pricePerUnit;
     var quantity = req.body.quantity;
     var unit = req.body.unit;
-    var user_id = req.body.userid;
+    var user_id = req.user._id;
+
     if (unitArray.includes(unit)) {
         var newSubscriptionData = {
             name: name,
@@ -40,29 +54,21 @@ app.post('/addNewSubscription', function (req, res) {
             unit: unit,
             userid: user_id
         };
-        try {
-            db.collection('newuser').findOne({ "_id": mongo.ObjectID(user_id) }, function (err, result) {//when this error will come
-                if (err) throw new Error(err);
-                if (!result) {
-                    res.send("error occured");
-                }
-                else {
-                    db.collection('newSubscription').insert(newSubscriptionData, function (err, result) {
-                        if (err) res.send("Error");//throw new Error("product name already exists with the requested user");
-                        else res.send("inserted successfully");
-                    });
-                }
-            });
-        }
-        catch (err) {
-            if (err) throw new Error("something went wrong");
-        }
+        //removed try catch block and commented out user finding logic as we are verifying token and getting user from middleware function
+        // db.collection('newuser').findOne({ "_id": mongo.ObjectID(user_id) }, function (err, result) {//when this error will come
+        //     if (err) throw new Error(err);
+        //     if (!result) {
+        //         res.send("error occured");
+        //     }
+        db.collection('newSubscription').insert(newSubscriptionData, function (err, result) {
+            if (err) res.send("Error");//throw new Error("product name already exists with the requested user");
+            else res.send("inserted successfully");
+        });
     }
     else {
         throw new Error("please select a valid quantity");
-
     }
-});
+})
 app.post('/userregistration', function (req, res) {
     var firstName = req.body.firstname;
     var lastName = req.body.lastname;
@@ -90,9 +96,6 @@ app.post('/userregistration', function (req, res) {
         }
         var token = jwt.sign({ id: result.insertedIds[0].toString() }, config.secret, { expiresIn: 86400 });
         res.status(200).send({ auth: true, token: token });
-
-
-
     });
 });
 app.get('/me', function (req, res) {
@@ -107,11 +110,14 @@ app.get('/me', function (req, res) {
         })
     })
 })
+
 var callback = function (resp, pwd, err, result) {
     if (err) throw new (err);
     var compareResult = bcrypt.compareSync(pwd, result.password);
     if (compareResult) {
-        resp.send("login successfull");
+        var token = jwt.sign({ id: result._id }, config.secret, { expiresIn: 86400 });
+        resp.status(200).send({ auth: true, token: token, message: "Login Successfull" });
+        // resp.send("login successfull");
     }
     else {
         resp.send("password is incorrect");
@@ -124,6 +130,37 @@ app.post('/login', function (req, res) {
     var doc = db.collection('newuser').findOne({ firstname: username },
         example);
 });
+app.post('/auth/user/subscriptions/getall', function (req, res) {
+    db.collection('newSubscription').find({ "userid": req.user._id }).toArray(function (err, docs) {
+        if (err) throw new Error("error");
+        if (!err) {
+            if (docs.length > 0)
+                res.send(docs);
+        }
+    })
+})
+app.post('/auth/user/subscription/update', function (req, res) {
+    var subscriptionId = req.body.subscriptionId;
+    db.collection('newSubscription').findOne({ "_id": mongo.ObjectID(subscriptionId) }, function (err, result) {
+        if (err) throw new Error("There is no subscription for the requested id");
+        if (result) {
+            db.collection('newSubscription').update({ "_id": mongo.ObjectID(subscriptionId) }, { $set: { "pricePerUnit": 58 } });
+
+        }
+        else res.send("No such subscription");
+        res.send("updated successfully");
+    })
+})
+app.post('/auth/user/subscription/delete', function (req, res) {
+    var subscriptionId = req.body.subscriptionId;
+    db.collection('newSubscription').findOne({ "_id": mongo.ObjectID(subscriptionId) }, function (err, result) {
+        if (err) throw new Error("There is no subscription for the requested id");
+        if (result) {
+            db.collection('newSubscription').remove({ "_id": mongo.ObjectID(subscriptionId) });
+        }
+        res.send("deleted successfully");
+    })
+})
 app.get('/', (req, res) => res.send("Hello world"));
 app.get('/home', (req, res) => res.json({ message: "hurray, you did it" }));
 app.get('/login', function (req, res) {
