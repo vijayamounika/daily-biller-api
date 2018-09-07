@@ -17,6 +17,7 @@ MongoClient.connect(url, function (err, client) {
         clo = client.close.bind(client);
         console.log('Connected to MongoDB');
         db.collection('newuser').createIndex({ email: 1 }, { unique: true });
+        db.collection('newSubscription').createIndex({ userid: 1, name: 1 }, { unique: true });
 
     }
 });
@@ -42,21 +43,12 @@ app.post('/addNewSubscription', function (req, res) {
                 if (!result) {
                     res.send("error occured");
                 }
-                if (result) {
-                    db.collection('newSubscription').findOne({ "userid": user_id, "name": name }, function (err, result) {
-                        if (err) throw new Error(err);
-                        if (result) {
-                            res.send("product name already exists");
-                        }
-                        else {
-                            db.collection('newSubscription').insert(newSubscriptionData, function (err, result) {
-                                if (err) throw new Error(err);
-                                else res.send("inserted successfully");
-                            });
-                        }
-                    })
+                else {
+                    db.collection('newSubscription').insert(newSubscriptionData, function (err, result) {
+                        if (err) res.send("Error");//throw new Error("product name already exists with the requested user");
+                        else res.send("inserted successfully");
+                    });
                 }
-
             });
         }
         catch (err) {
