@@ -144,22 +144,85 @@ app.post('/auth/user/subscription/update', function (req, res) {
     db.collection('newSubscription').findOne({ "_id": mongo.ObjectID(subscriptionId) }, function (err, result) {
         if (err) throw new Error("There is no subscription for the requested id");
         if (result) {
-            db.collection('newSubscription').update({ "_id": mongo.ObjectID(subscriptionId) }, { $set: { "pricePerUnit": 58 } });
-
+            db.collection('newSubscription').update({ "_id": mongo.ObjectID(subscriptionId) }, { $set: { "pricePerUnit": 58 } }, function (err, result) {
+                if (err) throw new Error("error");
+                if (result)
+                    res.send("updated successfully");
+                else throw new Error("error");
+            });
         }
         else res.send("No such subscription");
-        res.send("updated successfully");
     })
 })
-app.post('/auth/user/subscription/delete', function (req, res) {
+app.post('/auth/user/subscription/delete', validateSubscriptionId, function (req, res) {
     var subscriptionId = req.body.subscriptionId;
-    db.collection('newSubscription').findOne({ "_id": mongo.ObjectID(subscriptionId) }, function (err, result) {
-        if (err) throw new Error("There is no subscription for the requested id");
+    db.collection('newSubscription').remove({ "_id": mongo.ObjectID(subscriptionId) });
+    res.send("deleted successfully");
+
+})
+function validateSubscriptionId(req, res, next) {
+    var subId = req.body.subscriptionId;
+    db.collection('newSubscription').findOne({ "userid": req.user._id }, { "_id": mongo.ObjectId(subId) }, function (err, result) {
+        if (err) throw new Error("error");
         if (result) {
-            db.collection('newSubscription').remove({ "_id": mongo.ObjectID(subscriptionId) });
+            next();
         }
-        res.send("deleted successfully");
+        else throw new Error("There is no subscription with the requested id");
     })
+}
+
+app.post('/auth/user/dailySubscriptionTrack', function (req, res) {
+    var subId = req.body.subscriptionId;
+    var prName = req.body.name;
+
+    db.collection('newSubscription').findOne({ "_id": mongo.ObjectID(subId) }, { "name": prName }, function (err, docs) {
+        if (err) throw new Error("Error occurred");
+        if (docs) {
+
+            var quantity = req.body.quantity;
+            var cost = docs.pricePerUnit * quantity;
+            //var today = new Date();
+
+            myDailySubscription = {
+                name: prName,
+                Date: new Date(),
+                quantity: quantity,
+                cost: cost,
+                subId: subId
+            }
+            db.collection('dailySubscriptions').insert(myDailySubscription, function (err, result) {
+                if (err) throw new Error("error");
+                if (result) {
+                    res.send("successfully inserted");
+                }
+                else res.send("Error occurred while tracking")
+            })
+        }
+    })
+})
+app.post('/auth/user/getTillDateSubscriptionCost', validateSubscriptionId, function (req, res) {
+    var subId = req.body.subscriptionId;
+    var month = req.body.month;
+    db.collection('dailySubscriptions').find({ "subId": subId }, { "$expr": { "$eq": [{ "$month": month }] } }).toArray(function (err, docs) {
+        if (err) throw new Error("error");
+        if (docs.length > 0) {
+            var totalCostTillDate = 0;
+            for (var i = 0; i < docs.length; i++) {
+                totalCostTillDate += docs[i].cost;
+            }
+            var obj1 = {
+                userId: req.user._id,
+                subId: subId,
+                month: month,
+                cost: totalCostTillDate,
+                entries: docs.length
+            };
+            var myJson = JSON.stringify(obj1);
+            res.send(myJson);
+        }
+        else res.send("Error");
+    })
+
 })
 app.get('/', (req, res) => res.send("Hello world"));
 app.get('/home', (req, res) => res.json({ message: "hurray, you did it" }));
