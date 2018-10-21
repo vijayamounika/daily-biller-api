@@ -4,32 +4,47 @@ var bodyParser = require("body-parser");
 var bcrypt = require("bcryptjs");
 app.use(bodyParser.json()); // support json encoded bodies
 app.use(bodyParser.urlencoded({ extended: true })); // support encoded bodies
-var mongo = require("mongodb");
-var MongoClient = require("mongodb").MongoClient; //accessing mongoclient property
-var url = "mongodb://localhost:27017";
-var db;
-var clo;
 var jwt = require("jsonwebtoken");
 var path = require("path");
 var config = require(path.resolve(__dirname, "./config.js"));
+var mongoose = require("mongoose");
+var mongoDB = "mongodb://localhost:27017/dailybiller_mongoose";
+mongoose.connect(mongoDB);
+mongoose.Promise = global.Promise;
+//when successfully connected
+var db = mongoose.connection;
+db.on("connected", function() {
+  console.log("Mongoose default connection  open to " + mongoDB);
+});
+//if the connection throws an error
+db.on("error", console.error.bind(console, "MongoDB connection error:"));
+var myModels = require("./models/userSchema.js");
+var user = myModels.user;
+var userSubscription = myModels.userSubscription;
+var dailySubscription = require("./models/dailySubscriptionmodel.js");
+
+//var MongoClient = require("mongodb").MongoClient; //accessing mongoclient property
+//var url = "mongodb://localhost:27017";
+//var db;
+//var clo;
 //connect method to connect to the server
-MongoClient.connect(
-  url,
-  function(err, client) {
-    if (err) throw err;
-    else {
-      db = client.db("dailybiller");
-      clo = client.close.bind(client);
-      console.log("Connected to MongoDB");
-      db.collection("newuser").createIndex({ email: 1 }, { unique: true });
-      db.collection("newSubscription").createIndex(
-        { userid: 1, name: 1 },
-        { unique: true }
-      );
-      //db.collection('dailySubscriptions').createIndex({ name: 1, subId: 1 }, { unique: true });
-    }
-  }
-);
+// MongoClient.connect(
+//   url,
+//   function(err, client) {
+//     if (err) throw err;
+//     else {
+//       db = client.db("dailybiller");
+//       clo = client.close.bind(client);
+//       console.log("Connected to MongoDB");
+//       db.collection("newuser").createIndex({ email: 1 }, { unique: true });
+//       db.collection("newSubscription").createIndex(
+//         { userid: 1, name: 1 },
+//         { unique: true }
+//       );
+//       //db.collection('dailySubscriptions').createIndex({ name: 1, subId: 1 }, { unique: true });
+//     }
+//   }
+// );
 app.use("/auth/user", function(req, res, next) {
   var token = req.headers["x-access-token"];
   if (!token)
@@ -39,18 +54,32 @@ app.use("/auth/user", function(req, res, next) {
       return res
         .status(500)
         .send({ auth: false, message: "Failed to authenticate token" });
-    db.collection("newuser").findOne(
-      { _id: mongo.ObjectID(decoded.id) },
-      { password: false },
-      function(err, result) {
-        if (err)
-          return res.status(500).send("There was a problem finding the user");
-        if (!result) return res.status(404).send("No user found");
-        //res.status(200).send(result);
-        req.user = result; //
-        next();
+    user.findOne({ _id: decoded.id }).then(
+      result => {
+        if (result) {
+          req.user = result;
+          next();
+        } else {
+          res.status(500).send("Invalid Token");
+        }
+      },
+      err => {
+        res.send(err);
       }
     );
+
+    // db.collection("newuser").findOne(
+    //   { _id: mongo.ObjectID(decoded.id) },
+    //   { password: false },
+    //   function(err, result) {
+    //     if (err)
+    //       return res.status(500).send("There was a problem finding the user");
+    //     if (!result) return res.status(404).send("No user found");
+    //     //res.status(200).send(result);
+    //     req.user = result; //
+    //     next();
+    //   }
+    // );
   });
 });
 app.post("/auth/user/addNewSubscription", function(req, res, next) {
@@ -60,35 +89,60 @@ app.post("/auth/user/addNewSubscription", function(req, res, next) {
   var quantity = req.body.quantity;
   var unit = req.body.unit;
   var subtype = req.body.subtype;
-  var user_id = req.user._id;
+  req.body.userId = req.user.id;
 
   if (unitArray.includes(unit)) {
-    var newSubscriptionData = {
-      name: name,
-      pricePerUnit: pricePerUnit,
-      quantity: quantity,
-      unit: unit,
-      subType: subtype,
-      userid: user_id
-    };
-    //removed try catch block and commented out user finding logic as we are verifying token and getting user from middleware function
-    // db.collection('newuser').findOne({ "_id": mongo.ObjectID(user_id) }, function (err, result) {//when this error will come
-    //     if (err) throw new Error(err);
-    //     if (!result) {
-    //         res.send("error occured");
-    //     }
-    db.collection("newSubscription").insert(newSubscriptionData, function(
-      err,
-      result
-    ) {
-      if (err) res.send("Error");
-      //throw new Error("product name already exists with the requested user");
-      else res.send("inserted successfully");
-    });
+    var newSubscriptionData = new userSubscription(req.body);
+    userSubscription.find({ userId: req.body.userId, name: name }).then(
+      result => {
+        if (result.length > 0) {
+          throw new Error("Subscription is already existed");
+        } else {
+          newSubscriptionData
+            .save()
+            .then(item => {
+              res.status(200).send("Inserted successfully");
+            })
+            .catch(err => {
+              console.log(err);
+              res.status(500).send("error");
+            });
+        }
+      },
+      err => {
+        res.send(err);
+      }
+    );
   } else {
     throw new Error("please select a valid quantity");
   }
 });
+
+//  {
+//   name: name,
+//   pricePerUnit: pricePerUnit,
+//   quantity: quantity,
+//   unit: unit,
+//   subType: subtype,
+//   userid: user_id
+// };
+//removed try catch block and commented out user finding logic as we are verifying token and getting user from middleware function
+// db.collection('newuser').findOne({ "_id": mongo.ObjectID(user_id) }, function (err, result) {//when this error will come
+//     if (err) throw new Error(err);
+//     if (!result) {
+//         res.send("error occured");
+//     }
+
+// db.collection("newSubscription").insert(newSubscriptionData, function(
+//   err,
+//   result
+// ) {
+//   if (err) res.send("Error");
+//   //throw new Error("product name already exists with the requested user");
+//   else res.send("inserted successfully");
+// });
+
+//it is working
 app.post("/userregistration", function(req, res) {
   var firstName = req.body.firstname;
   var lastName = req.body.lastname;
@@ -101,26 +155,42 @@ app.post("/userregistration", function(req, res) {
     throw new Error("password doesn't match");
   }
   var salt = bcrypt.genSaltSync(10);
-  var hash = bcrypt.hashSync(password, salt);
-  var myData = {
-    firstname: firstName,
-    lastname: lastName,
-    email: email,
-    gender: gender,
-    age: age,
-    password: hash
-  };
-  db.collection("newuser").insert(myData, function(err, result) {
-    if (err) {
+  req.body.password = bcrypt.hashSync(password, salt);
+  var myData = new user(req.body);
+  user.find({ email: email }).then(
+    result => {
+      if (result.length > 0) {
+        throw new Error("email is already registered");
+      } else {
+        myData
+          .save()
+          .then(item => {
+            var token = jwt.sign({ id: item.id.toString() }, config.secret, {
+              expiresIn: 86400
+            });
+            res.status(200).send({ auth: true, token: token });
+          })
+          .catch(err => {
+            console.log(err);
+            res.status(400).send(err);
+          });
+      }
+    },
+    err => {
       res.send(err);
     }
-    var token = jwt.sign(
-      { id: result.insertedIds[0].toString() },
-      config.secret,
-      { expiresIn: 86400 }
-    );
-    res.status(200).send({ auth: true, token: token });
-  });
+  );
+  // db.collection("newuser").insert(myData, function(err, result) {
+  //   if (err) {
+  //     res.send(err);
+  //   }
+  //   var token = jwt.sign(
+  //     { id: result.insertedIds[0].toString() },
+  //     config.secret,
+  //     { expiresIn: 86400 }
+  //   );
+  //   res.status(200).send({ auth: true, token: token });
+  // });
 });
 app.get("/me", function(req, res) {
   var token = req.headers["x-access-token"];
@@ -131,93 +201,166 @@ app.get("/me", function(req, res) {
       return res
         .status(500)
         .send({ auth: false, message: "Failed to authenticate token" });
-    db.collection("newuser").findOne(
-      { _id: mongo.ObjectID(decoded.id) },
-      { password: false },
-      function(err, result) {
-        if (err)
-          return res.status(500).send("There was a problem finding the user");
-        if (!result) return res.status(404).send("No user found");
-        res.status(200).send(result);
+    user.findOne({ _id: decoded.id }).then(
+      result => {
+        if (result) {
+          req.user = result;
+        } else {
+          res.status(500).send("Invalid Token");
+        }
+      },
+      err => {
+        res.send(err);
       }
     );
+    // db.collection("newuser").findOne(
+    //   { _id: mongo.ObjectID(decoded.id) },
+    //   { password: false },
+    //   function(err, result) {
+    //     if (err)
+    //       return res.status(500).send("There was a problem finding the user");
+    //     if (!result) return res.status(404).send("No user found");
+    //     res.status(200).send(result);
+    //   }
+    // );
   });
 });
 
-var callback = function(resp, pwd, err, result) {
-  if (err) throw new err();
-  var compareResult = bcrypt.compareSync(pwd, result.password);
-  if (compareResult) {
-    var token = jwt.sign({ id: result._id }, config.secret, {
-      expiresIn: 86400
-    });
-    resp
-      .status(200)
-      .send({ auth: true, token: token, message: "Login Successfull" });
-    // resp.send("login successfull");
-  } else {
-    resp.send("password is incorrect");
-  }
-};
+// var callback = function(resp, pwd, err, result) {
+//   if (err) throw new err();
+//   var compareResult = bcrypt.compareSync(pwd, result.password);
+//   if (compareResult) {
+//     var token = jwt.sign({ id: result._id }, config.secret, {
+//       expiresIn: 86400
+//     });
+//     resp
+//       .status(200)
+//       .send({ auth: true, token: token, message: "Login Successfull" });
+//     // resp.send("login successfull");
+//   } else {
+//     resp.send("password is incorrect");
+//   }
+// };
 app.post("/login", function(req, res) {
   var username = req.body.username;
   var pwd = req.body.password;
-  var example = callback.bind(null, res, pwd);
-  var doc = db.collection("newuser").findOne({ firstname: username }, example);
+  //var example = callback.bind(null, res, pwd);
+  var doc = user.findOne({ firstname: username }).then(
+    result => {
+      var compareResult = bcrypt.compareSync(pwd, result.password);
+      if (compareResult) {
+        var token = jwt.sign({ id: result._id }, config.secret, {
+          expiresIn: 86400
+        });
+        res
+          .status(200)
+          .send({ auth: true, token: token, message: "Login Successfull" });
+      } else {
+        res.send("password is Incorrect");
+      }
+    },
+    err => {
+      res.send(err);
+    }
+  );
+  //var doc = db.collection("newuser").findOne({ firstname: username }, example);
 });
 app.post("/auth/user/subscriptions/getall", function(req, res) {
-  db.collection("newSubscription")
-    .find({ userid: req.user._id })
-    .toArray(function(err, docs) {
-      if (err) throw new Error("error");
-      if (!err) {
-        if (docs.length > 0) res.send(docs);
-      }
-    });
+  userSubscription.find({ userId: req.user.id }).then(
+    result => {
+      res.send(result);
+    },
+    err => {
+      res.send(err);
+    }
+  );
+  // db.collection("newSubscription")
+  //   .find({ userid: req.user._id })
+  //   .toArray(function(err, docs) {
+  //     if (err) throw new Error("error");
+  //     if (!err) {
+  //       if (docs.length > 0) res.send(docs);
+  //     }
+  //   });
 });
 app.post("/auth/user/subscription/update", function(req, res) {
   var subscriptionId = req.body.subscriptionId;
-  db.collection("newSubscription").findOne(
-    { _id: mongo.ObjectID(subscriptionId) },
-    function(err, result) {
-      if (err) throw new Error("There is no subscription for the requested id");
-      if (result) {
-        db.collection("newSubscription").update(
-          { _id: mongo.ObjectID(subscriptionId) },
-          { $set: { pricePerUnit: 58 } },
-          function(err, result) {
-            if (err) throw new Error("error");
-            if (result) res.send("updated successfully");
-            else throw new Error("error");
-          }
-        );
-      } else res.send("No such subscription");
-    }
-  );
+  userSubscription
+    .findOneAndUpdate({ _id: subscriptionId }, { $set: { quantity: 2 } })
+    .then(
+      result => {
+        if (result) {
+          res.send("Updated Successfully");
+        }
+      },
+      err => res.send(err)
+    );
+
+  // db.collection("newSubscription").findOne(
+  //   { _id: mongo.ObjectID(subscriptionId) },
+  //   function(err, result) {
+  //     if (err) throw new Error("There is no subscription for the requested id");
+  //     if (result) {
+  //       db.collection("newSubscription").update(
+  //         { _id: mongo.ObjectID(subscriptionId) },
+  //         { $set: { pricePerUnit: 58 } },
+  //         function(err, result) {
+  //           if (err) throw new Error("error");
+  //           if (result) res.send("updated successfully");
+  //           else throw new Error("error");
+  //         }
+  //       );
+  //     } else res.send("No such subscription");
+  //   }
+  // );
 });
 app.post("/auth/user/subscription/delete", validateSubscriptionId, function(
   req,
   res
 ) {
   var subscriptionId = req.body.subscriptionId;
-  db.collection("newSubscription").remove({
-    _id: mongo.ObjectID(subscriptionId)
-  });
-  res.send("deleted successfully");
+  userSubscription.findByIdAndDelete({ _id: subscriptionId }).then(
+    result => {
+      if (result) {
+        res.send("Deleted Successfully");
+      }
+    },
+    err => {
+      res.send(err);
+    }
+  );
+  // db.collection("newSubscription").remove({
+  //   _id: mongo.ObjectID(subscriptionId)
+  // });
+  // res.send("deleted successfully");
 });
 function validateSubscriptionId(req, res, next) {
   var subId = req.body.subscriptionId;
-  db.collection("newSubscription").findOne(
-    { userid: req.user._id, _id: mongo.ObjectId(subId) },
-    function(err, result) {
-      if (err) throw new Error("error");
+  userSubscription.findOne({ _id: subId, userId: req.user.id }).then(
+    result => {
       if (result) {
         req.subscription = result;
         next();
-      } else throw new Error("There is no subscription with the requested id");
+      } else {
+        throw new Error("There is no subscription with the requested ID");
+      }
+    },
+    err => {
+      res.send(err);
     }
   );
 }
+// db.collection("newSubscription").findOne(
+//   { userid: req.user._id, _id: mongo.ObjectId(subId) },
+//   function(err, result) {
+//     if (err) throw new Error("error");
+//     if (result) {
+//       req.subscription = result;
+//       next();
+//     } else throw new Error("There is no subscription with the requested id");
+//   }
+// );
+
 function getSpecificDate(req, res, next) {
   var subId = req.body.subscriptionId;
   var date1 = new Date(req.body.date);
@@ -244,96 +387,183 @@ function getSpecificDate(req, res, next) {
 app.post("/auth/user/dailySubscriptionTrack", function(req, res) {
   var subId = req.body.subscriptionId;
   var prName = req.body.name;
-
-  db.collection("newSubscription").findOne(
-    { _id: mongo.ObjectID(subId), name: prName },
-    function(err, docs) {
-      if (err) throw new Error("Error occurred");
-      if (docs) {
-        var quantity = req.body.quantity;
-        if (docs.subType == "daily") {
-          if (req.body.priceperunit) {
-            costperunit = req.body.priceperunit;
-          } else {
-            throw new Error("please enter price per unit");
-          }
-        } else costperunit = docs.pricePerUnit;
-
-        var day = new Date().getDate();
-        var month = new Date().getMonth() + 1;
-        if (month < 10) {
-          month = "0" + month;
+  userSubscription.findOne({ _id: subId }).then(result => {
+    if (result) {
+      var quantity = req.body.quantity;
+      if (result.subType == "daily") {
+        if (req.body.priceperunit) {
+          costperunit = req.body.priceperunit;
+        } else {
+          throw new Error("please enter price per unit");
         }
-        var year = new Date().getFullYear();
-        dateString = 2018 + "-" + "0" + 9 + "-" + 24 + "T00:00:00.000Z";
-        var mydate = new Date(dateString);
-        myDailySubscription = {
-          name: prName,
-          date: mydate,
-          quantity: quantity,
-          cost: costperunit,
-          subId: subId
-        };
-        db.collection("dailySubscriptions")
-          .find({
-            $and: [{ $expr: { $eq: ["$date", mydate] } }, { name: prName }]
-          })
-          .toArray(function(err, result) {
-            // db.collection('dailySubscriptions').find({ "name": prName, "date": day }).toArray(function (err, result) {
-            if (err) throw new Error("Error");
-            if (result.length > 0)
-              res.send(
-                "Cannot create two daily subscriptions on a single date, please update to change"
-              );
-            else {
-              db.collection("dailySubscriptions").insertOne(
-                myDailySubscription,
-                function(err, result) {
-                  if (err) throw new Error("error");
-                  if (result) {
-                    res.send("successfully inserted");
-                  } else res.send("Error occurred while tracking");
-                }
-              );
-            }
-          });
+      } else {
+        costperunit = result.pricePerUnit;
       }
+      var day = new Date().getDate();
+      var month = new Date().getMonth() + 1;
+      if (month < 10) {
+        month = "0" + month;
+      }
+      var year = new Date().getFullYear();
+      dateString = 2018 + "-" + 10 + "-" + "0" + 9 + "T00:00:00.000Z";
+      var mydate = new Date(dateString);
+      myDailySubscription = {
+        name: prName,
+        date: mydate,
+        quantity: quantity,
+        cost: costperunit,
+        subId: subId
+      };
+      var mydailySubscription = new dailySubscription(myDailySubscription);
+      dailySubscription
+        .find({
+          $and: [{ $expr: { $eq: ["$date", mydate] } }, { name: prName }]
+        })
+        .then(result => {
+          if (result.length > 0) {
+            res.send(
+              "cannot create two daily subscriptions on a single date, please update to change"
+            );
+          } else {
+            mydailySubscription.save().then(
+              result => {
+                if (result) {
+                  res.send("Inserted Successfully");
+                }
+              },
+              err => {
+                res.send(err);
+              }
+            );
+          }
+        });
     }
-  );
+  });
 });
+
+// db.collection("newSubscription").findOne(
+//   { _id: mongo.ObjectID(subId), name: prName },
+//   function(err, docs) {
+//     if (err) throw new Error("Error occurred");
+//     if (docs) {
+//       var quantity = req.body.quantity;
+//       if (docs.subType == "daily") {
+//         if (req.body.priceperunit) {
+//           costperunit = req.body.priceperunit;
+//         } else {
+//           throw new Error("please enter price per unit");
+//         }
+//       } else costperunit = docs.pricePerUnit;
+
+//       var day = new Date().getDate();
+//       var month = new Date().getMonth() + 1;
+//       if (month < 10) {
+//         month = "0" + month;
+//       }
+//       var year = new Date().getFullYear();
+//       dateString = 2018 + "-" + "0" + 9 + "-" + 24 + "T00:00:00.000Z";
+//       var mydate = new Date(dateString);
+//       myDailySubscription = {
+//         name: prName,
+//         date: mydate,
+//         quantity: quantity,
+//         cost: costperunit,
+//         subId: subId
+//       };
+//       db.collection("dailySubscriptions")
+//         .find({
+//           $and: [{ $expr: { $eq: ["$date", mydate] } }, { name: prName }]
+//         })
+//         .toArray(function(err, result) {
+//           // db.collection('dailySubscriptions').find({ "name": prName, "date": day }).toArray(function (err, result) {
+//           if (err) throw new Error("Error");
+//           if (result.length > 0)
+//             res.send(
+//               "Cannot create two daily subscriptions on a single date, please update to change"
+//             );
+//           else {
+//             db.collection("dailySubscriptions").insertOne(
+//               myDailySubscription,
+//               function(err, result) {
+//                 if (err) throw new Error("error");
+//                 if (result) {
+//                   res.send("successfully inserted");
+//                 } else res.send("Error occurred while tracking");
+//               }
+//             );
+//           }
+//         });
+//     }
+//   }
+// );
+
 app.post("/auth/user/newSubscriptionUpdate", validateSubscriptionId, function(
   req,
   res
 ) {
   if (req.subscription.subType === "monthly") {
     var pricePerUnit = req.body.priceperunit;
-    db.collection("newSubscription").update(
-      { _id: req.subscription._id },
-      { $set: { pricePerUnit: pricePerUnit } },
-      function(err, result) {
-        if (req.body.fromdate) {
-          var subId = req.body.subscriptionId;
-          var fromdate = req.body.fromdate;
-          db.collection("dailySubscriptions").updateMany(
-            {
-              subId: subId,
-              date: { $gte: new Date(fromdate), $lt: new Date() }
-            },
-            { $set: { cost: pricePerUnit } },
-            function(err, result) {
-              if (err) throw new Error("error");
-              if (result) {
-                res.send("updated succesfully");
-              }
-            }
-          );
+    userSubscription
+      .findOneAndUpdate(
+        { _id: req.subscription.id },
+        { $set: { pricePerUnit: pricePerUnit } }
+      )
+      .then(result => {
+        if (result) {
+          if (req.body.fromdate) {
+            var subId = req.body.subscriptionId;
+            var fromdate = req.body.fromdate;
+            dailySubscription
+              .update(
+                {
+                  subId: subId,
+                  date: { $gte: new Date(fromdate), $lt: new Date() }
+                },
+                { $set: { cost: pricePerUnit } },
+                { multi: true }
+              )
+              .then(
+                result => {
+                  if (result) {
+                    res.send("Updated Successfully");
+                  }
+                },
+                err => {
+                  res.send(err);
+                }
+              );
+          }
         }
-      }
-    );
-  } else {
-    throw new Error("Error");
+      });
   }
 });
+//   db.collection("newSubscription").update(
+//     { _id: req.subscription._id },
+//     { $set: { pricePerUnit: pricePerUnit } },
+//     function(err, result) {
+//       if (req.body.fromdate) {
+//         var subId = req.body.subscriptionId;
+//         var fromdate = req.body.fromdate;
+//         db.collection("dailySubscriptions").updateMany(
+//           {
+//             subId: subId,
+//             date: { $gte: new Date(fromdate), $lt: new Date() }
+//           },
+//           { $set: { cost: pricePerUnit } },
+//           function(err, result) {
+//             if (err) throw new Error("error");
+//             if (result) {
+//               res.send("updated succesfully");
+//             }
+//           }
+//         );
+//       }
+//     }
+//   );
+// } else {
+//   throw new Error("Error");
+// }
+
 app.post(
   "/auth/user/getSpecificDateSubscriptionAndUpdate",
   validateSubscriptionId,
